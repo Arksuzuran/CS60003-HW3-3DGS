@@ -1,0 +1,16 @@
+repositories:
+  - name: gaussian-splatting
+    url: https://github.com/graphdeco-inria/gaussian-splatting
+    role: "背景训练、物体 A 训练、B/C 统一高斯化"
+    patch_notes:
+      - "如果 COLMAP 版本不兼容，需要单独记录 convert.py 参数修复。"
+  - name: threestudio
+    url: https://github.com/threestudio-project/threestudio
+    role: "物体 B 文本到 3D、物体 C 单图到 3D"
+    patch_notes:
+      - "优先保留原始配置，必要时只做最小兼容性补丁。"
+  - name: stable-zero123
+    url: https://huggingface.co/stabilityai/stable-zero123
+    role: "物体 C 主线权重来源"
+    patch_notes:
+      - "集群不可达时由本地离线打包提供。"

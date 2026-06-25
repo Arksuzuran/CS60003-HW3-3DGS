@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "bundles": {
+    "offline_weights": {
+      "description": "集群无法直接访问的模型权重",
+      "required": true,
+      "items": [
+        {
+          "id": "stable_zero123_ckpt",
+          "path": "assets/offline_weights/stable-zero123/stable-zero123.ckpt",
+          "source": "https://huggingface.co/stabilityai/stable-zero123",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "物体 C 单图到 3D"
+        },
+        {
+          "id": "text_to_3d_guidance",
+          "path": "assets/offline_weights/text_to_3d/",
+          "source": "manual package",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "物体 B 文本到 3D",
+          "estimated_size_gb": "5-9"
+        }
+      ]
+    },
+    "offline_inputs": {
+      "description": "输入素材与背景数据",
+      "required": true,
+      "items": [
+        {
+          "id": "mipnerf360_counter",
+          "path": "assets/offline_inputs/background/mipnerf360_counter/",
+          "source": "official Mip-NeRF 360 download",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "背景训练",
+          "selection": "counter"
+        },
+        {
+          "id": "object_a_multiview",
+          "path": "assets/offline_inputs/object_a/",
+          "source": "Objectron cereal_box category or self-captured images",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "物体 A 训练",
+          "selection": "objectron/cereal_box"
+        },
+        {
+          "id": "object_c_rgba",
+          "path": "assets/offline_inputs/object_c/object_c_rgba.png",
+          "source": "Objectron shoe category single frame + local background removal",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "物体 C 输入",
+          "selection": "objectron/shoe"
+        }
+      ]
+    },
+    "offline_third_party": {
+      "description": "可能需要离线解压的第三方补件",
+      "required": false,
+      "items": [
+        {
+          "id": "third_party_archives",
+          "path": "assets/offline_third_party/",
+          "source": "manual package",
+          "sha256": "TO_BE_FILLED",
+          "purpose": "扩展源码或不可在线获取的补件"
+        }
+      ]
+    }
+  }
+}

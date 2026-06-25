@@ -1,0 +1,56 @@
+project:
+  name: hw3_3dgs_aigc
+  report_language: zh-CN
+  strict_mode: true
+
+paths:
+  project_root: .
+  data_root: ./data
+  asset_root: ./assets
+  output_root: ./outputs
+  log_root: ./outputs/logs
+  figure_root: ./neurips_template/figures
+
+cluster:
+  device: cuda:0
+  gpu_name: A100-40GB
+  allow_wandb: false
+  network_mode: limited
+
+background:
+  dataset_name: mipnerf360
+  scene: counter
+  fallback_scene: garden
+  source_selection:
+    provider: official_mipnerf360
+    rationale: "counter 是更接近宿舍/工位台面的室内场景。"
+
+object_a:
+  source_name: objectron_cereal_box
+  expects_colmap: true
+  image_subdir: images
+  colmap_subdir: colmap
+  provider: objectron
+  category: cereal_box
+  rationale: "纸盒纹理丰富、几何稳定，适合 COLMAP + 3DGS。"
+
+object_b:
+  pipeline: threestudio_text_to_3d
+  prompts:
+    primary: "a compact adjustable desk lamp with matte white shade and round base"
+    alternate_1: "a black ergonomic desk chair with mesh backrest"
+    alternate_2: "a small desktop humidifier with rounded edges"
+
+object_c:
+  pipeline: stable_zero123
+  expects_rgba: true
+  image_name: object_c_rgba.png
+  provider: objectron
+  category: shoe
+  rationale: "鞋是校园环境常见物体，轮廓清晰，适合单图到 3D。"
+
+fusion:
+  representation: gaussian
+  scale_policy: match_background_extent
+  render_fps: 24
+  render_seconds: 12

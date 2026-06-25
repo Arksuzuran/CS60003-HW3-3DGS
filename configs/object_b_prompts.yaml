@@ -1,0 +1,10 @@
+prompts:
+  - id: desk_lamp
+    text: "a compact adjustable desk lamp with matte white shade and round base"
+    notes: "默认主提示词，宿舍/工位常见，结构明确。"
+  - id: desk_chair
+    text: "a black ergonomic desk chair with mesh backrest"
+    notes: "备选，校园和办公室常见。"
+  - id: humidifier
+    text: "a small desktop humidifier with rounded edges"
+    notes: "备选，几何简洁，利于稳定收敛。"

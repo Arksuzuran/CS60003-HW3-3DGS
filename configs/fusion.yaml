@@ -1,0 +1,37 @@
+{
+  "fusion": {
+    "background": {
+      "name": "counter",
+      "gaussian_path": "outputs/bg/counter/point_cloud/iteration_30000/point_cloud.ply"
+    },
+    "objects": [
+      {
+        "name": "object_a",
+        "gaussian_path": "outputs/object_a/point_cloud/iteration_30000/point_cloud.ply",
+        "translation": [0.0, 0.0, 0.0],
+        "rotation_euler_deg": [0.0, 0.0, 0.0],
+        "scale": 1.0
+      },
+      {
+        "name": "object_b",
+        "gaussian_path": "outputs/object_b_gaussian/point_cloud/iteration_30000/point_cloud.ply",
+        "translation": [0.8, 0.0, 0.1],
+        "rotation_euler_deg": [0.0, 25.0, 0.0],
+        "scale": 0.7
+      },
+      {
+        "name": "object_c",
+        "gaussian_path": "outputs/object_c_gaussian/point_cloud/iteration_30000/point_cloud.ply",
+        "translation": [-0.7, 0.0, 0.15],
+        "rotation_euler_deg": [0.0, -30.0, 0.0],
+        "scale": 0.75
+      }
+    ],
+    "render": {
+      "duration_seconds": 12,
+      "fps": 24,
+      "width": 1920,
+      "height": 1080
+    }
+  }
+}
