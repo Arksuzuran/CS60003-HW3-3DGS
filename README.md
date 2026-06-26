@@ -1,101 +1,288 @@
-# HW3 Task 1: 3DGS + AIGC 多源资产生成与真实场景融合
+# 基于 3DGS 与 AIGC 的多源资产生成与真实场景融合
 
-本仓库用于在 Windows 本地准备一个可交接的实验工程，并在 Linux 集群上完成正式训练、融合渲染与报告整理。
+本项目实现课程作业题目一：从**真实场景重建**、**文本/单图生成 3D 资产**到**统一高斯融合与漫游渲染**的完整流程。四类资产最终均以 3D Gaussian Splatting 表示，并在同一真实背景场景中完成布局与可视化。
 
+## 任务概览
 
-## 目标
+| 模块 | 输入 | 方法 | 输出 |
+|------|------|------|------|
+| **背景** | 真实多视角图像 | 3D Gaussian Splatting | 背景高斯场 |
+| **物体 A** | 真实多视角图像 | COLMAP 位姿恢复 → 3DGS | 前景高斯场 |
+| **物体 B** | 文本提示词 | threestudio 文本到 3D → mesh → 多视角渲染 → 3DGS | 前景高斯场 |
+| **物体 C** | 单张 RGBA 图像 | threestudio Zero123 → mesh → 多视角渲染 → 3DGS | 前景高斯场 |
+| **融合** | 背景 + A/B/C 高斯 | 刚体变换拼接 | 融合场景 + 漫游视频 |
 
-本项目严格对应题目一，最终需要完成以下四类核心结果：
+整体数据流：
 
-1. 物体 A：真实多视角素材 -> COLMAP -> 3D Gaussian Splatting
-2. 物体 B：文本到 3D 生成
-3. 物体 C：单图到 3D 生成
-4. 独立背景：开源真实场景 -> 3D Gaussian Splatting
+```
+背景图像 ──────────────────────────────► 3DGS ──► 背景高斯
+真实多视角 ──► COLMAP ──► 3DGS ──────────► 物体 A 高斯
+文本提示 ──► threestudio ──► mesh ──► 3DGS ► 物体 B 高斯
+单图 RGBA ─► threestudio ──► mesh ──► 3DGS ► 物体 C 高斯
+                              │
+                    背景 + A + B + C ──► merge ──► 漫游视频
+```
 
-随后将 A/B/C 三类资产统一转换到高斯表示，在同一背景场景中融合，并导出漫游视频、图表和中文 NeurIPS 风格报告。
+B/C 不直接以 mesh 参与最终融合，而是先转为与 A、背景一致的**统一高斯表示**，再按 `configs/fusion.yaml` 中的位姿与尺度拼入场景。
 
 ## 仓库结构
 
 ```text
-configs/                  默认配置
-docs/                     交接、资产、限制说明
-neurips_template/         中文报告模板与参考文献
-offline_assets_manifest/  离线权重、输入素材清单
-scripts/                  Linux 集群执行脚本与 Python 工具
-third_party_manifest/     第三方仓库、依赖与补丁说明
+CS60003-HW3-3DGS/
+├── configs/                    # 项目与融合配置
+│   ├── project.yaml            # 各模块默认参数与路径约定
+│   ├── object_b_prompts.yaml   # 物体 B 候选提示词
+│   └── fusion.yaml             # 融合布局、高斯路径、渲染参数
+├── scripts/                    # 训练、转换、融合与渲染脚本
+│   ├── env.sh                  # 环境变量（第三方路径、COLMAP 等）
+│   ├── common.sh               # 脚本公共参数解析
+│   ├── setup_cluster.sh        # 创建 conda 环境
+│   ├── prepare_assets.py       # 检查离线素材布局
+│   ├── train_bg_3dgs.sh        # 背景 3DGS 训练
+│   ├── colmap_object_a.sh      # 物体 A COLMAP
+│   ├── train_objA_3dgs.sh      # 物体 A 3DGS 训练
+│   ├── train_objB_text_to_3d.sh
+│   ├── train_objC_image_to_3d.sh
+│   ├── convert_to_gaussians.py # B/C：mesh → 多视角数据集 → 3DGS
+│   ├── render_multiview.py     # nvdiffrast 多视角渲染
+│   ├── merge_gaussians.py      # 高斯融合
+│   ├── render_flythrough.py    # 融合场景轨迹渲染
+│   ├── render_flythrough.sh
+│   └── export_report_assets.py # 导出报告用图表与指标
+├── offline_assets_manifest/    # 所需权重与输入素材清单
+├── third_party_manifest/       # 第三方仓库来源清单
+├── neurips_template/           # 中文 NeurIPS 风格报告 LaTeX 模板
+├── environment.yml             # conda 环境定义
+├── assets/                     # 权重与输入（不纳入 Git）
+├── outputs/                    # 训练与融合结果（不纳入 Git）
+└── third_party/                # gaussian-splatting、threestudio（不纳入 Git）
 ```
 
-大型数据、权重和输出不纳入 Git：
+脚本统一接受以下参数（见 `scripts/common.sh`）：
 
-- `data/`
-- `assets/`
-- `outputs/`
-- `offline_bundles/`
+```bash
+--project-root PATH
+--data-root PATH
+--asset-root PATH
+--output-root PATH
+--device cuda:0    # 可选
+```
 
-## 推荐工作流
+下文以 `PROJECT_ROOT` 表示仓库根目录。
 
-### 1. Windows 本地准备
+## 环境依赖
 
-1. 阅读 [docs/cluster_handoff.md](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/docs/cluster_handoff.md)
-2. 根据 [offline_assets_manifest/offline_assets.yaml](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/offline_assets_manifest/offline_assets.yaml) 下载并整理离线素材
-3. 将离线素材放到约定目录：
-   - `assets/offline_weights/`
-   - `assets/offline_inputs/`
-   - `assets/offline_third_party/`
-4. 运行 `scripts/prepare_assets.py --echo-config` 检查资产布局
-5. 将仓库与离线素材包上传到集群
+### Conda 环境
 
-### 2. Linux 集群执行
+```bash
+cd $PROJECT_ROOT
+bash scripts/setup_cluster.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs
+conda activate hw3_3dgs_aigc
+```
 
-1. `bash scripts/setup_cluster.sh --project-root ...`
-2. `python scripts/prepare_assets.py --project-root ... --asset-root ...`
-3. `bash scripts/train_bg_3dgs.sh ...`
-4. `bash scripts/train_objA_3dgs.sh ...`
-5. `bash scripts/train_objB_text_to_3d.sh ...`
-6. `bash scripts/train_objC_image_to_3d.sh ...`
-7. `python scripts/convert_to_gaussians.py ...`
-8. `python scripts/merge_gaussians.py ...`
-9. `bash scripts/render_flythrough.sh ...`
-10. `python scripts/export_report_assets.py ...`
+### 第三方仓库
 
-## 默认技术路线
+将以下仓库克隆或解压到 `third_party/`（路径见 `third_party_manifest/third_party_sources.yaml`）：
 
-- 背景：`Mip-NeRF 360/garden`
-- 物体 A：公开真实多视角素材或后续替换为自采素材
-- 物体 B：`threestudio` 文本到 3D
-- 物体 C：`Stable Zero123`
-- 融合：统一为高斯表示后做刚体拼接，不使用 Blender-only 作为主线
+- [gaussian-splatting](https://github.com/graphdeco-inria/gaussian-splatting) — 背景、物体 A 及 B/C 高斯训练
+- [threestudio](https://github.com/threestudio-project/threestudio) — 物体 B/C 生成
 
-## 关键约束
+3DGS 需编译 `diff-gaussian-rasterization` 与 `simple-knn`；threestudio 需按官方说明安装其 CUDA 扩展（如 `tinycudann`、`nerfacc` 等）。
 
-- 远程集群不能依赖 Hugging Face、Pexels、GitLab INRIA、在线 TeX bundle。
-- 不使用 WandB，统一写本地日志：
-  - `train.log`
-  - `metrics.json`
-  - `curves.csv`
-  - `gpu_mem.txt`
-- B/C 必须是严格意义上的文本到 3D、单图到 3D 主线。fallback 只能发生在同类实现路径内部。
+### 其他工具
 
-## 当前状态
+- **COLMAP** — 物体 A 稀疏重建与去畸变
+- **FFmpeg** — 漫游视频编码
+- **CUDA GPU** — 建议 ≥ 24 GB 显存
 
-当前版本已经提供：
+## 数据准备
 
-- 工程目录结构
-- 默认配置
-- 集群脚本骨架
-- 离线资产清单
-- 第三方仓库清单
-- 中文报告模板骨架
+按 `offline_assets_manifest/offline_assets.yaml` 准备素材，目录约定如下：
 
-当前版本尚未包含：
+```text
+assets/
+├── offline_inputs/
+│   ├── background/mipnerf360_counter/   # Mip-NeRF 360 counter 场景
+│   ├── object_a/                        # 物体 A 多视角原图
+│   └── object_c/object_c_rgba.png       # 物体 C 单图（RGBA，已抠图）
+└── offline_weights/
+    ├── text_to_3d/                      # Stable Diffusion 等文本到 3D 权重
+    └── stable-zero123/                 # Zero123 权重（或 diffusers 缓存）
+```
 
-- 实际下载好的大型数据和权重
-- 正式训练输出
-- 最终漫游视频与结果图
+检查布局：
 
-## 主要文档
+```bash
+python scripts/prepare_assets.py \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs
+```
 
-- [docs/cluster_handoff.md](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/docs/cluster_handoff.md)
-- [docs/asset_inventory.md](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/docs/asset_inventory.md)
-- [docs/limitations.md](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/docs/limitations.md)
-- [docs/source_selection.md](/E:/Code/Assignment/SpacialIntelligence/HW3_TASK1_3DGS/docs/source_selection.md)
+## 复现流程
+
+以下步骤按依赖顺序排列；物体 B 与 C 的 threestudio 训练可在 GPU 允许时并行。
+
+### 1. 背景 3DGS
+
+```bash
+bash scripts/train_bg_3dgs.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs \
+  --device cuda:0
+```
+
+输出：`outputs/bg/counter/`，含 `point_cloud/iteration_30000/point_cloud.ply`。
+
+### 2. 物体 A：COLMAP + 3DGS
+
+将多视角图像放入 COLMAP 工作区（例如 `outputs/object_a/colmap_ws/input/`），然后：
+
+```bash
+bash scripts/colmap_object_a.sh outputs/object_a/colmap_ws
+
+bash scripts/train_objA_3dgs.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs \
+  --device cuda:0
+```
+
+输出：`outputs/object_a/point_cloud/iteration_30000/point_cloud.ply`。
+
+### 3. 物体 B：文本到 3D
+
+默认提示词见 `configs/object_b_prompts.yaml`，也可在命令行覆盖：
+
+```bash
+bash scripts/train_objB_text_to_3d.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs \
+  --device cuda:0
+```
+
+输出：`outputs/object_b/` 下的 threestudio checkpoint 与验证渲染。
+
+### 4. 物体 C：单图到 3D
+
+```bash
+bash scripts/train_objC_image_to_3d.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs \
+  --device cuda:0
+```
+
+输入：`assets/offline_inputs/object_c/object_c_rgba.png`  
+输出：`outputs/object_c/` 下的 threestudio checkpoint 与验证渲染。
+
+### 5. B/C 转为统一高斯表示
+
+对 B、C 分别执行：从 threestudio checkpoint 导出 mesh → 多视角渲染 → 3DGS 训练。
+
+```bash
+python scripts/convert_to_gaussians.py \
+  --project-root $PROJECT_ROOT \
+  --output-root $PROJECT_ROOT/outputs \
+  --object b \
+  --iterations 7000 \
+  --port 6031
+
+python scripts/convert_to_gaussians.py \
+  --project-root $PROJECT_ROOT \
+  --output-root $PROJECT_ROOT/outputs \
+  --object c \
+  --iterations 7000 \
+  --port 6030
+```
+
+输出：
+
+- `outputs/object_b_gaussian/point_cloud/iteration_7000/point_cloud.ply`
+- `outputs/object_c_gaussian/point_cloud/iteration_7000/point_cloud.ply`
+
+物体 B 为浅色物体时，转换脚本默认使用**黑色背景**训练 3DGS（勿加 `--white-background`）。
+
+### 6. 高斯融合
+
+编辑 `configs/fusion.yaml` 调整各物体在场景中的平移、旋转与缩放，然后：
+
+```bash
+python scripts/merge_gaussians.py \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs \
+  --config configs/fusion.yaml
+```
+
+输出：`outputs/fusion/merged_gaussians.ply`。
+
+### 7. 漫游视频
+
+```bash
+bash scripts/render_flythrough.sh \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs
+```
+
+输出：
+
+- 逐帧图像：`outputs/fusion/frames/`
+- 视频：`outputs/videos/flythrough.mp4`
+
+### 8. 报告素材（可选）
+
+```bash
+python scripts/export_report_assets.py \
+  --project-root $PROJECT_ROOT \
+  --data-root $PROJECT_ROOT/data \
+  --asset-root $PROJECT_ROOT/assets \
+  --output-root $PROJECT_ROOT/outputs
+```
+
+将图表写入 `neurips_template/figures/`，指标写入 `outputs/report_metrics.csv`，供 `neurips_template/report.tex` 引用。
+
+## 主要输出一览
+
+| 产物 | 路径 |
+|------|------|
+| 背景高斯 | `outputs/bg/counter/point_cloud/iteration_30000/point_cloud.ply` |
+| 物体 A 高斯 | `outputs/object_a/point_cloud/iteration_30000/point_cloud.ply` |
+| 物体 B 高斯 | `outputs/object_b_gaussian/point_cloud/iteration_7000/point_cloud.ply` |
+| 物体 C 高斯 | `outputs/object_c_gaussian/point_cloud/iteration_7000/point_cloud.ply` |
+| 融合场景 | `outputs/fusion/merged_gaussians.ply` |
+| 漫游视频 | `outputs/videos/flythrough.mp4` |
+| 融合配置快照 | `outputs/fusion/merge_plan.json` |
+
+## 配置说明
+
+- **`configs/project.yaml`** — 场景名、默认提示词、路径约定等全局默认值。
+- **`configs/fusion.yaml`** — 融合时各高斯 PLY 路径及刚体变换；修改此文件即可调整物体在台面上的位置与朝向。
+- **`configs/object_b_prompts.yaml`** — 物体 B 备用提示词列表。
+
+threestudio 侧详细超参见 `third_party/threestudio/configs/dreamfusion-sd.yaml`（物体 B）与 `configs/experimental/unified-guidance/zero123-simple.yaml`（物体 C）。
+
+## 方法说明
+
+- **物体 A** 走标准「多视角 → COLMAP → 3DGS」路线，要求输入为同一物体、覆盖足够视角的真实照片。
+- **物体 B** 使用 Score Distillation Sampling（SDS）从文本生成 NeRF 隐式场，再导出 mesh 并重建为高斯。
+- **物体 C** 使用 Zero123 以单张条件图像引导多视角一致性，同样经 mesh 中转为高斯。
+- **融合** 对 B/C 的高斯参数做刚体变换（平移、欧拉角旋转、均匀缩放），与背景和物体 A 直接拼接，不做网格布尔运算。
+
+## 报告
+
+实验报告使用 `neurips_template/report.tex` 撰写，编译方式见 `neurips_template/README.md`。

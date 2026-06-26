@@ -1,0 +1,262 @@
+\documentclass{article}
+\usepackage[preprint]{neurips_2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{caption}
+\usepackage{multirow}
+
+\title{基于 3DGS 与 AIGC 的多源资产生成与真实场景融合}
+
+\author{%
+  25110980024 吴鑫宇 \\
+  25110980002 陈子曦 \\
+  课程：深度学习与空间智能 \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本文围绕课程作业题目一，构建一个从真实场景重建、AIGC 资产生成到统一三维融合渲染的完整流程。我们完成四类核心资产：基于多视角真实素材与 COLMAP 的物体 A 重建、基于文本提示的物体 B 生成、基于单张图像的物体 C 生成，以及基于 Mip-NeRF 360 真实场景的背景重建。三类前景资产统一转换为 3D Gaussian Splatting 表示，与背景高斯场进行刚体拼接，输出融合场景与漫游视频。实验表明，该流程能在保持各模块方法严格性的前提下实现多源资产的统一表示与可视化，背景场景在 30\,000 次迭代后测试 PSNR 达 29.21\,dB，物体 A 重建训练 PSNR 达 33.74\,dB。
+\end{abstract}
+
+\section{任务背景介绍}
+
+三维场景重建与生成是空间智能领域的核心问题。3D Gaussian Splatting (3DGS)~\cite{kerbl20233dgs} 以各向异性高斯椭球作为场景基元，结合可微光栅化实现实时渲染，在重建质量与速度上均具有优势。与此同时，以 Score Distillation Sampling (SDS)~\cite{poole2022dreamfusion} 为代表的生成式方法将预训练扩散模型的先验蒸馏到三维表示中，使文本到 3D 与单图到 3D 成为可能。
+
+本作业题目一要求同时完成以下四类结果并最终融合：
+\begin{enumerate}
+  \item 物体 A：真实多视角素材 $\rightarrow$ COLMAP 位姿恢复 $\rightarrow$ 3DGS 重建；
+  \item 物体 B：仅由文本提示驱动的文本到 3D 生成；
+  \item 物体 C：由单张真实图像驱动的单图到 3D 生成；
+  \item 独立背景场景：公开真实场景 $\rightarrow$ 3DGS 重建。
+\end{enumerate}
+在此基础上，三类前景资产需与背景统一融合，输出多视角漫游视频，并给出方法、配置、结果与分析。
+
+\section{数据集描述}
+
+\begin{table}[h]
+  \centering
+  \caption{各模块输入数据集描述。}
+  \label{tab:dataset}
+  \begin{tabular}{lllll}
+    \toprule
+    模块 & 数据来源 & 类型 & 数量/规格 & 用途 \\
+    \midrule
+    背景 & Mip-NeRF 360~\cite{mipnerf3602022} & 真实多视角 & counter 场景 & 3DGS 重建 \\
+    物体 A & TanksAndTemple/Truck & 真实多视角 & 218 张 1920$\times$1080 & COLMAP + 3DGS \\
+    物体 B & 文本提示词 & 文本 & 1 条 & 文本到 3D \\
+    物体 C & Truck 单帧 + rembg & 单图 RGBA & 1 张 & 单图到 3D \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+物体 B 默认提示词为 ``a compact adjustable desk lamp with matte white shade and round base''，选取几何边界清晰、材质细节适中的静态物体以提高训练稳定性。物体 C 输入图取自真实多视角序列的单帧，经 rembg 抠图得到 RGBA 版本，主体轮廓清晰、适合单图到 3D。
+
+\section{方法原理简述}
+
+\subsection{3D Gaussian Splatting}
+3DGS 用一组各向异性 3D 高斯椭球表示场景，每个高斯由中心位置 $\mu$、协方差 $\Sigma$、不透明度 $\alpha$ 和球谐系数描述外观。协方差由缩放向量 $s$ 与四元数 $q$ 参数化：$\Sigma = R S S^\top R^\top$。渲染通过可微光栅化将 3D 高斯投影到屏幕并按深度 $\alpha$ 混合，优化目标为光度重建损失：
+\begin{equation}
+  \mathcal{L} = (1-\lambda)\,\mathcal{L}_1 + \lambda\,\mathcal{L}_{\text{D-SSIM}},
+\end{equation}
+其中 $\lambda=0.2$。训练中周期性进行高斯密度控制（克隆与分裂）以自适应场景复杂度。
+
+\subsection{物体 A：COLMAP + 3DGS}
+物体 A 走标准 ``多视角 $\rightarrow$ COLMAP $\rightarrow$ 3DGS'' 路线。COLMAP 执行 SIFT 特征提取、匹配与稀疏重建，得到相机位姿与稀疏点云；随后进行去畸变与图像分块，供 3DGS 初始化高斯位置并训练。该路线严格满足题意中``真实多视角 + COLMAP + 3DGS''的要求。
+
+\subsection{物体 B：文本到 3D（DreamFusion + SDS）}
+物体 B 使用 threestudio~\cite{threestudio2023} 的 DreamFusion-SD 配置。场景以隐式体积（ImplicitVolume）表示，几何由 ProgressiveBandHashGrid 编码 + MLP 预测密度与特征，材质为漫反射带点光源。优化目标为 SDS 损失：
+\begin{equation}
+  \nabla_\theta \mathcal{L}_{\text{SDS}}(\theta) = \mathbb{E}_{t,\epsilon}\left[ w(t)\,\big(\epsilon_\phi(x_t;t,y) - \epsilon\big)\,\frac{\partial x_t}{\partial \theta} \right],
+\end{equation}
+其中 $\epsilon_\phi$ 为预训练 Stable Diffusion 2.1 的噪声预测，$y$ 为文本提示。辅以朝向一致性损失与稀疏性正则。
+
+\subsection{物体 C：单图到 3D（Zero123）}
+物体 C 使用 Zero123~\cite{zero1232023} 单图到 3D 路线。Zero123 在 Stable Diffusion 基础上以相机视角为条件微调，将单张输入图作为条件引导新视角合成。训练时随机采样相机姿态，对当前 NeRF 渲染图施加 SDS 蒸馏，使三维表示在多视角下与条件图保持一致。辅以法向平滑损失以提升表面质量。
+
+\subsection{统一高斯融合}
+为保持最终表示一致性，物体 B、C 的隐式场先导出为带纹理 mesh，再通过 nvdiffrast 多视角渲染生成合成数据集，最终训练为 3DGS 高斯场。这样 A、B、C 与背景均以高斯表示，融合阶段对前景高斯施加刚体变换（平移 $\mathbf{t}$、欧拉角旋转 $R$、均匀缩放 $s$）：
+\begin{equation}
+  \mu' = s\,R\,\mu + \mathbf{t},\quad
+  \Sigma' = s^2\,R\,\Sigma\,R^\top,\quad
+  q' = R\,q,
+\end{equation}
+随后与背景高斯直接拼接为单一 PLY 文件。
+
+\section{实验设置}
+
+\subsection{硬件与软件}
+实验在单卡 NVIDIA A100 40GB 上完成。3DGS 使用 PyTorch 2.4.1 + CUDA 12.4 与 \texttt{diff\_gaussian\_rasterization}；threestudio 使用 PyTorch 2.1.0 + CUDA 12.1 与 \texttt{tinycudann}、\texttt{nerfacc}。
+
+\subsection{超参数详表}
+
+\begin{table}[h]
+  \centering
+  \caption{各模块关键超参数。}
+  \label{tab:hyper}
+  \small
+  \begin{tabular}{lllll}
+    \toprule
+    超参数 & 背景 3DGS & 物体 A 3DGS & 物体 B (DreamFusion) & 物体 C (Zero123) \\
+    \midrule
+    Network & 3DGS (SH-3) & 3DGS (SH-3) & ImplicitVolume + MLP & ImplicitVolume + MLP \\
+    Batch Size & 全图 & 全图 & 1 (64$\times$64) & 1 (256$\times$256) \\
+    Optimizer & Adam & Adam & Adam & Adam \\
+    Learning Rate & $1.6\times10^{-4}\to0$ & $1.6\times10^{-4}\to0$ & 0.01 (geom) / 0.001 (bg) & 0.01 / 0.001 / 0.0001 \\
+    Epochs/Steps & 30\,000 & 30\,000 & 10\,000 & 10\,000 \\
+    Loss & $\mathcal{L}_1$ + D-SSIM & $\mathcal{L}_1$ + D-SSIM & SDS + orient + sparsity & SDS + normal smooth \\
+    $\lambda_{\text{D-SSIM}}$ & 0.2 & 0.2 & --- & --- \\
+    Guidance Scale & --- & --- & 100 & 5 \\
+    SH Degree & 3 & 3 & --- & --- \\
+    Density Init & --- & --- & blob\_magic3d & blob\_magic3d \\
+    Precision & fp32 & fp32 & 16-mixed & fp32 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{训练日志与可视化}
+由于运行环境网络限制，训练过程由框架自带 CSV logger 与文本日志记录。3DGS 训练日志包含逐迭代 Loss 与 7\,000/30\,000 次的 L1、PSNR 评估；threestudio 以 CSV 记录逐步 SDS/朝向/稀疏等损失。本文 Loss 与指标曲线由这些日志数据导出并绘制。
+
+\section{实验结果展示}
+
+\subsection{背景与物体 A 重建}
+图~\ref{fig:bg_curve} 与图~\ref{fig:objA_curve} 分别展示背景 counter 与物体 A 的 3DGS 训练损失与 PSNR 曲线。两者损失在前期快速下降后趋于平稳，背景在 7\,000 次迭代时测试 PSNR 为 27.34\,dB，30\,000 次时提升至 29.21\,dB；物体 A 训练 PSNR 从 30.15\,dB（7\,000）提升至 33.74\,dB（30\,000）。物体 A 输入视角示于图~\ref{fig:objA_input}。
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/bg_loss_psnr_curve.png}
+  \caption{背景 counter 3DGS 训练损失（对数纵轴）与 PSNR。}
+  \label{fig:bg_curve}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/objA_loss_psnr_curve.png}
+  \caption{物体 A (Truck) 3DGS 训练损失与 PSNR。}
+  \label{fig:objA_curve}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.9\linewidth]{figures/objA_recon_compare.png}
+  \caption{物体 A 输入视角（6 帧采样自 218 张真实多视角图像）。}
+  \label{fig:objA_input}
+\end{figure}
+
+\subsection{物体 B 与 C 生成}
+图~\ref{fig:objB_loss} 与图~\ref{fig:objC_loss} 分别展示物体 B、C 在 threestudio 训练过程中的损失曲线。SDS 损失在前半段波动较大，随几何逐步成形后趋于下降；朝向与稀疏性正则在后期收敛。图~\ref{fig:objB_grid} 与图~\ref{fig:objC_grid} 展示训练完成后的多视角验证渲染。
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/objB_loss_curve.png}
+  \caption{物体 B (DreamFusion-SD) 训练损失曲线。}
+  \label{fig:objB_loss}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/objC_loss_curve.png}
+  \caption{物体 C (Zero123) 训练损失曲线。}
+  \label{fig:objC_loss}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figures/object_b_generation_grid.png}
+  \caption{物体 B 文本到 3D 生成结果多视角渲染。}
+  \label{fig:objB_grid}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\linewidth]{figures/object_c_generation_grid.png}
+  \caption{物体 C 单图到 3D 生成结果多视角渲染。}
+  \label{fig:objC_grid}
+\end{figure}
+
+\subsection{融合场景与漫游视频}
+图~\ref{fig:fusion_teaser} 展示融合后的场景主视图，背景为 counter 台面，物体 A、B、C 经刚体变换放置于台面上方。图~\ref{fig:storyboard} 为漫游视频的 6 帧分镜，相机沿环绕轨迹拍摄。完整视频为 5 秒、24\,fps、1280$\times$720。
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/fusion_teaser.png}
+  \caption{融合场景主视图：背景 counter + 物体 A/B/C 统一高斯表示。}
+  \label{fig:fusion_teaser}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.95\linewidth]{figures/flythrough_storyboard.png}
+  \caption{漫游视频 6 帧分镜。}
+  \label{fig:storyboard}
+\end{figure}
+
+\subsection{关键指标详表}
+
+\begin{table}[h]
+  \centering
+  \caption{各模块关键评价指标。}
+  \label{tab:metrics}
+  \begin{tabular}{llll}
+    \toprule
+    模块 & 指标 & 数值 & 备注 \\
+    \midrule
+    背景 & Test PSNR & 29.21\,dB & counter @30\,000 \\
+    背景 & Test L1 & 0.0177 & counter @30\,000 \\
+    背景 & Train PSNR & 31.19\,dB & counter @30\,000 \\
+    物体 A & Train PSNR & 33.74\,dB & Truck @30\,000 \\
+    物体 A & Train L1 & 0.0063 & Truck @30\,000 \\
+    物体 B & threestudio 步数 & 10\,000 & DreamFusion-SD \\
+    物体 B & 高斯点数 & 36\,121 & @7\,000 \\
+    物体 C & threestudio 步数 & 10\,000 & Zero123 \\
+    物体 C & 高斯点数 & 59\,261 & @7\,000 \\
+    融合 & 合并总高斯数 & 1\,512\,738 & 背景 + A + B + C \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{深度现象分析}
+
+\paragraph{背景与物体 A 的重建质量。}
+背景 counter 在 30\,000 次迭代后测试 PSNR 达 29.21\,dB，表明 3DGS 对室内真实场景具有良好重建能力。物体 A (Truck) 训练 PSNR 达 33.74\,dB，高于背景，主要因为该物体为单一刚体、纹理丰富且视角覆盖完整，COLMAP 位姿恢复稳定，有利于 3DGS 初始化与密度控制。
+
+\paragraph{B/C 转统一高斯的必要性。}
+物体 B、C 原始输出为 NeRF 隐式场，与背景 3DGS 表示异构。若直接以 mesh 参与融合，将无法使用 3DGS 的实时光栅化渲染管线，且难以统一调整尺度与位姿。本文通过 ``mesh 导出 $\rightarrow$ 多视角渲染 $\rightarrow$ 3DGS 重建'' 的中转，使四类资产统一为高斯表示，融合仅需对前景高斯做刚体变换即可完成，显著简化了对齐与渲染流程。
+
+\paragraph{生成资产 mesh 导出的权重加载问题。}
+实验中发现 threestudio 的 \texttt{--export} 路径默认不加载 checkpoint 权重，导致导出的 mesh 几何退化为密度初始化的 blob、纹理坍缩为常数灰。修复后导出的 mesh 保留了训练得到的几何与颜色，物体 B 的白色台灯与物体 C 的真实色彩均得以保留。这一现象提示在复现生成式 3D 流水线时，导出阶段的权重加载需显式验证。
+
+\paragraph{浅色物体的训练背景选择。}
+物体 B 为白色台灯，若以白色背景训练 3DGS，高斯会因前景与背景灰度一致而迅速坍缩（仅 44 个有效高斯点）。改用黑色背景后，前景与背景对比度充足，7\,000 次迭代即获得 36\,121 个有效高斯点。该现象说明合成数据集的背景色应与前景主体颜色形成足够对比，以避免光栅化 $\alpha$ 混合退化为不可分情况。
+
+\paragraph{时间加速策略的影响。}
+受时间限制，物体 B/C 的统一高斯训练采用 7\,000 次迭代而非 30\,000 次。7\,000 次已能恢复主体几何与颜色，但细节与边缘质量仍有提升空间；在更长时间预算下可继续训练至 30\,000 次以获得更精细的高斯分布。
+
+\section{结论}
+
+本文实现了一个从真实场景重建、AIGC 资产生成到统一高斯融合与漫游渲染的完整流程。四类资产均以 3D Gaussian Splatting 表示，通过刚体变换完成融合，输出漫游视频与定量指标。实验验证了该流程在保持各模块方法严格性前提下的有效性，并揭示了生成式资产转高斯表示时权重加载、浅色物体背景选择等关键实践问题。
+
+\section*{外部链接}
+\begin{itemize}
+  \item 项目 GitHub 仓库：\url{https://github.com/Arksuzuran/CS60003-HW3-3DGS}
+  \item 模型权重网盘下载：\url{TODO_NETDISK}
+\end{itemize}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

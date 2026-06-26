@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/env.sh" 2>/dev/null || true
 parse_common_args "$@"
 echo_config
 
@@ -16,5 +17,4 @@ echo "Using prompt: ${PROMPT}"
 echo "Offline weight root: ${WEIGHT_ROOT}"
 echo "threestudio root: ${THREESTUDIO_ROOT}"
 
-CMD="python launch.py --config configs/magic3d-coarse-sd.yaml --train --gpu 0 system.prompt_processor.prompt='${PROMPT}' system.loggers.wandb.enable=false"
-maybe_run "cd \"${THREESTUDIO_ROOT}\" && ${CMD} | tee \"${WORK_ROOT}/train.log\""
+maybe_run "cd \"${THREESTUDIO_ROOT}\" && ${T3D_ENV}/bin/python launch.py --config configs/dreamfusion-sd.yaml --train --gpu 0 system.prompt_processor.prompt='${PROMPT}' system.loggers.wandb.enable=false exp_root_dir='${WORK_ROOT}' | tee \"${WORK_ROOT}/train.log\""

@@ -3,19 +3,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/env.sh" 2>/dev/null || true
 parse_common_args "$@"
 echo_config
 
 FUSED_ROOT="${OUTPUT_ROOT}/fusion"
 VIDEO_ROOT="${OUTPUT_ROOT}/videos"
-GS_ROOT="$(resolve_third_party_root GAUSSIAN_SPLATTING_ROOT "${PROJECT_ROOT}/third_party/gaussian-splatting")"
+CAMERAS_JSON="${OUTPUT_ROOT}/bg/counter/cameras.json"
+GS_ENV_PY="${GS_ENV:-/inspire/hdd/project/fdu-aidake-cfff/public/.conda/envs/gsbg2}/bin/python"
 
 maybe_run "mkdir -p \"${VIDEO_ROOT}\""
-echo "Assumes fused gaussian asset already exists under ${FUSED_ROOT}"
-echo "Gaussian Splatting root: ${GS_ROOT}"
+echo "Fused gaussian asset: ${FUSED_ROOT}/merged_gaussians.ply"
+echo "Background cameras (scale/fov reference): ${CAMERAS_JSON}"
 
-CMD="python render.py -m \"${FUSED_ROOT}\" --skip_train --skip_test"
-maybe_run "cd \"${GS_ROOT}\" && ${CMD} | tee \"${FUSED_ROOT}/render.log\""
-
-FFMPEG_CMD="ffmpeg -y -framerate 24 -i \"${FUSED_ROOT}/frames/%05d.png\" -c:v libx264 -pix_fmt yuv420p \"${VIDEO_ROOT}/flythrough.mp4\""
-maybe_run "${FFMPEG_CMD}"
+CMD="${GS_ENV_PY} \"${SCRIPT_DIR}/render_flythrough.py\" \
+  --ply \"${FUSED_ROOT}/merged_gaussians.ply\" \
+  --cameras \"${CAMERAS_JSON}\" \
+  --out-frames \"${FUSED_ROOT}/frames\" \
+  --out-video \"${VIDEO_ROOT}/flythrough.mp4\""
+maybe_run "${CMD} | tee \"${FUSED_ROOT}/render.log\""
