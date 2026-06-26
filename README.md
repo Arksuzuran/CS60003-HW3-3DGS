@@ -285,4 +285,14 @@ threestudio 侧详细超参见 `third_party/threestudio/configs/dreamfusion-sd.y
 
 ## 报告
 
-实验报告使用 `neurips_template/report.tex` 撰写，编译方式见 `neurips_template/README.md`。
+实验报告位于 `report/report.tex`，使用 NeurIPS 2026 LaTeX 模板，正文为中文。因使用 `xeCJK` 排版中文，需用 **XeLaTeX** 编译（不支持 pdflatex）：
+
+```bash
+cd report
+xelatex -interaction=nonstopmode report.tex
+bibtex report
+xelatex -interaction=nonstopmode report.tex
+xelatex -interaction=nonstopmode report.tex
+```
+
+或直接运行 `report/build.ps1`。编译环境需安装 XeLaTeX 与至少一种中文字体（如 Noto CJK、思源黑体/宋体、SimSun 等）。报告用图位于 `report/figures/`，由 `scripts/generate_report_figures.py` 从训练日志导出。

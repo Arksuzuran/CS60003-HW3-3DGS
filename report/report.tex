@@ -1,8 +1,18 @@
 \documentclass{article}
 \usepackage[preprint]{neurips_2026}
 
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
+\usepackage{xeCJK}
+% 中文支持：尝试常见 CJK 字体，缺失时由 xeCJK 自动回退
+\IfFontExistsTF{Noto Serif CJK SC}{\setCJKmainfont{Noto Serif CJK SC}}{%
+  \IfFontExistsTF{Source Han Serif SC}{\setCJKmainfont{Source Han Serif SC}}{%
+    \IfFontExistsTF{SimSun}{\setCJKmainfont{SimSun}}{%
+      \IfFontExistsTF{WenQuanYi Zen Hei}{\setCJKmainfont{WenQuanYi Zen Hei}}{}}}}
+\IfFontExistsTF{Noto Sans CJK SC}{\setCJKsansfont{Noto Sans CJK SC}}{%
+  \IfFontExistsTF{Source Han Sans SC}{\setCJKsansfont{Source Han Sans SC}}{%
+    \IfFontExistsTF{SimHei}{\setCJKsansfont{SimHei}}{}}}
+\IfFontExistsTF{Noto Sans Mono CJK SC}{\setCJKmonofont{Noto Sans Mono CJK SC}}{%
+  \IfFontExistsTF{Source Han Mono SC}{\setCJKmonofont{Source Han Mono SC}}{}}
+
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
@@ -16,6 +26,7 @@
 \usepackage{longtable}
 \usepackage{caption}
 \usepackage{multirow}
+\usepackage{float}
 
 \title{基于 3DGS 与 AIGC 的多源资产生成与真实场景融合}
 
@@ -28,6 +39,12 @@
 \begin{document}
 
 \maketitle
+
+\section*{分工}
+\begin{itemize}
+  \item \textbf{吴鑫宇（25110980024）}：物体 A（COLMAP + 3DGS）与背景场景 3DGS 重建；统一高斯融合与刚体对齐；漫游视频渲染；实验报告结果展示与现象分析撰写。
+  \item \textbf{陈子曦（25110980002）}：物体 B（DreamFusion-SD 文本到 3D）与物体 C（Zero123 单图到 3D）训练；生成资产 mesh 导出与多视角渲染转高斯；训练曲线与指标可视化；报告方法原理与实验设置撰写。
+\end{itemize}
 
 \begin{abstract}
 本文围绕课程作业题目一，构建一个从真实场景重建、AIGC 资产生成到统一三维融合渲染的完整流程。我们完成四类核心资产：基于多视角真实素材与 COLMAP 的物体 A 重建、基于文本提示的物体 B 生成、基于单张图像的物体 C 生成，以及基于 Mip-NeRF 360 真实场景的背景重建。三类前景资产统一转换为 3D Gaussian Splatting 表示，与背景高斯场进行刚体拼接，输出融合场景与漫游视频。实验表明，该流程能在保持各模块方法严格性的前提下实现多源资产的统一表示与可视化，背景场景在 30\,000 次迭代后测试 PSNR 达 29.21\,dB，物体 A 重建训练 PSNR 达 33.74\,dB。
@@ -48,7 +65,7 @@
 
 \section{数据集描述}
 
-\begin{table}[h]
+\begin{table}[H]
   \centering
   \caption{各模块输入数据集描述。}
   \label{tab:dataset}
@@ -104,7 +121,7 @@
 
 \subsection{超参数详表}
 
-\begin{table}[h]
+\begin{table}[H]
   \centering
   \caption{各模块关键超参数。}
   \label{tab:hyper}
@@ -136,21 +153,21 @@
 \subsection{背景与物体 A 重建}
 图~\ref{fig:bg_curve} 与图~\ref{fig:objA_curve} 分别展示背景 counter 与物体 A 的 3DGS 训练损失与 PSNR 曲线。两者损失在前期快速下降后趋于平稳，背景在 7\,000 次迭代时测试 PSNR 为 27.34\,dB，30\,000 次时提升至 29.21\,dB；物体 A 训练 PSNR 从 30.15\,dB（7\,000）提升至 33.74\,dB（30\,000）。物体 A 输入视角示于图~\ref{fig:objA_input}。
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.85\linewidth]{figures/bg_loss_psnr_curve.png}
   \caption{背景 counter 3DGS 训练损失（对数纵轴）与 PSNR。}
   \label{fig:bg_curve}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.85\linewidth]{figures/objA_loss_psnr_curve.png}
   \caption{物体 A (Truck) 3DGS 训练损失与 PSNR。}
   \label{fig:objA_curve}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.9\linewidth]{figures/objA_recon_compare.png}
   \caption{物体 A 输入视角（6 帧采样自 218 张真实多视角图像）。}
@@ -160,28 +177,28 @@
 \subsection{物体 B 与 C 生成}
 图~\ref{fig:objB_loss} 与图~\ref{fig:objC_loss} 分别展示物体 B、C 在 threestudio 训练过程中的损失曲线。SDS 损失在前半段波动较大，随几何逐步成形后趋于下降；朝向与稀疏性正则在后期收敛。图~\ref{fig:objB_grid} 与图~\ref{fig:objC_grid} 展示训练完成后的多视角验证渲染。
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.85\linewidth]{figures/objB_loss_curve.png}
   \caption{物体 B (DreamFusion-SD) 训练损失曲线。}
   \label{fig:objB_loss}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.85\linewidth]{figures/objC_loss_curve.png}
   \caption{物体 C (Zero123) 训练损失曲线。}
   \label{fig:objC_loss}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.7\linewidth]{figures/object_b_generation_grid.png}
   \caption{物体 B 文本到 3D 生成结果多视角渲染。}
   \label{fig:objB_grid}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.7\linewidth]{figures/object_c_generation_grid.png}
   \caption{物体 C 单图到 3D 生成结果多视角渲染。}
@@ -191,14 +208,14 @@
 \subsection{融合场景与漫游视频}
 图~\ref{fig:fusion_teaser} 展示融合后的场景主视图，背景为 counter 台面，物体 A、B、C 经刚体变换放置于台面上方。图~\ref{fig:storyboard} 为漫游视频的 6 帧分镜，相机沿环绕轨迹拍摄。完整视频为 5 秒、24\,fps、1280$\times$720。
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.85\linewidth]{figures/fusion_teaser.png}
   \caption{融合场景主视图：背景 counter + 物体 A/B/C 统一高斯表示。}
   \label{fig:fusion_teaser}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.95\linewidth]{figures/flythrough_storyboard.png}
   \caption{漫游视频 6 帧分镜。}
@@ -207,7 +224,7 @@
 
 \subsection{关键指标详表}
 
-\begin{table}[h]
+\begin{table}[H]
   \centering
   \caption{各模块关键评价指标。}
   \label{tab:metrics}
@@ -253,7 +270,7 @@
 \section*{外部链接}
 \begin{itemize}
   \item 项目 GitHub 仓库：\url{https://github.com/Arksuzuran/CS60003-HW3-3DGS}
-  \item 模型权重网盘下载：\url{TODO_NETDISK}
+  \item 模型权重网盘下载：\url{https://pan.baidu.com/s/1BEBuuniAqxeG2ziIJ7qmOA?pwd=3rwy}
 \end{itemize}
 
 \bibliographystyle{plainnat}

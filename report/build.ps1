@@ -4,22 +4,23 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $root
 
 try {
-    if (Get-Command latexmk -ErrorAction SilentlyContinue) {
-        latexmk -pdf report.tex
-        exit $LASTEXITCODE
-    }
-
-    if (Get-Command pdflatex -ErrorAction SilentlyContinue) {
-        pdflatex report.tex
+    # 中文报告需用 XeLaTeX（xeCJK 依赖 XeTeX 引擎）
+    if (Get-Command xelatex -ErrorAction SilentlyContinue) {
+        xelatex -interaction=nonstopmode report.tex
         if (Test-Path references.bib) {
             bibtex report
-            pdflatex report.tex
-            pdflatex report.tex
+            xelatex -interaction=nonstopmode report.tex
+            xelatex -interaction=nonstopmode report.tex
         }
         exit $LASTEXITCODE
     }
 
-    throw "No LaTeX engine found. Install TeX Live or MiKTeX, then rerun .\build.ps1"
+    if (Get-Command latexmk -ErrorAction SilentlyContinue) {
+        latexmk -xelatex report.tex
+        exit $LASTEXITCODE
+    }
+
+    throw "未找到 xelatex。中文报告需要 XeLaTeX，请安装 TeX Live 或 MiKTeX（含 xelatex 与中文字体），然后重新运行 .\build.ps1"
 }
 finally {
     Pop-Location
